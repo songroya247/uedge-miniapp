@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>UltimateEdge Scanner</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg: #F6F7FB;
+    --surface: #FFFFFF;
+    --ink: #161B2E;
+    --ink-soft: #5B6178;
+    --line: #E4E7F0;
+    --buy: #12A150;
+    --buy-bg: #E7F8EE;
+    --sell: #E0392E;
+    --sell-bg: #FDEBE9;
+    --amber: #9A6B00;
+    --amber-bg: #FCF1DD;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 90px);
+    min-height: 100%;
+  }
+  .num { font-family: "SF Mono", "Roboto Mono", ui-monospace, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+  header {
+    padding: 22px 18px 18px;
+    background: linear-gradient(135deg, #2A46E8, #3D5CFF 55%, #5B7BFF);
+    color: #fff;
+    border-radius: 0 0 22px 22px;
+  }
+  header h1 { margin: 0 0 6px; font-size: 21px; font-weight: 700; letter-spacing: -0.01em; }
+  .sub { font-size: 13px; opacity: 0.88; display: flex; align-items: center; gap: 7px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #7CFFB2; box-shadow: 0 0 0 0 rgba(124,255,178,.6); animation: pulse 2s infinite; }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(124,255,178,.5); }
+    70% { box-shadow: 0 0 0 6px rgba(124,255,178,0); }
+    100% { box-shadow: 0 0 0 0 rgba(124,255,178,0); }
+  }
+
+  .banner {
+    margin: 14px 16px 0; padding: 10px 12px; border-radius: 12px;
+    background: var(--amber-bg); color: var(--amber); font-size: 12.5px; line-height: 1.45;
+    display: none;
+  }
+  .banner.show { display: block; }
+
+  .filters { display: flex; gap: 8px; padding: 16px 16px 4px; overflow-x: auto; }
+  .chip {
+    flex: 0 0 auto; padding: 7px 14px; border-radius: 999px; border: 1px solid var(--line);
+    background: var(--surface); color: var(--ink-soft); font-size: 13px; font-weight: 600;
+  }
+  .chip.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+
+  main { padding: 8px 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; display: flex; flex-direction: column; gap: 7px; }
+  .card-top { display: flex; justify-content: space-between; align-items: center; }
+  .pair { font-size: 16px; font-weight: 700; }
+  .pill { font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+  .pill.buy { color: var(--buy); background: var(--buy-bg); }
+  .pill.sell { color: var(--sell); background: var(--sell-bg); }
+  .card-meta { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: var(--ink-soft); }
+  .price { font-size: 15px; color: var(--ink); }
+  .time { font-size: 12px; color: var(--ink-soft); }
+
+  .empty { text-align: center; padding: 60px 24px; color: var(--ink-soft); }
+  .empty h3 { color: var(--ink); margin: 0 0 6px; font-size: 16px; }
+  .empty p { margin: 0; font-size: 13.5px; line-height: 1.5; }
+</style>
+</head>
+<body>
+  <header>
+    <h1>UltimateEdge Scanner</h1>
+    <div class="sub"><span class="dot"></span><span id="statusText">28 pairs monitored</span></div>
+  </header>
+
+  <div class="banner" id="demoBanner">Showing sample data. Set DATA_URL near the top of this file to connect your live feed.</div>
+
+  <div class="filters">
+    <button class="chip active" data-filter="all">All</button>
+    <button class="chip" data-filter="regression">Regression channel</button>
+    <button class="chip" data-filter="candlestick">Candlestick</button>
+  </div>
+
+  <main id="list"></main>
+
+  <script>
+    // ---- Point this at your live feed ----
+    // A JSON file your uedge_engine_3 workflow writes each run works well —
+    // e.g. a GitHub Pages URL or the raw.githubusercontent.com URL of a
+    // results.json the Action commits. Expected shape:
+    // [{ pair, direction: "buy"|"sell", strategy: "regression"|"candlestick",
+    //    pattern, price, time }]
+    const DATA_URL = "";
+    const REFRESH_INTERVAL_MS = 30000; // auto-refresh cadence while the app is open
+
+    // ---- Point this at your Cloudflare Worker relay (optional) ----
+    // Leave blank and the button just re-pulls DATA_URL instead of
+    // kicking off a fresh remote scan.
+    const RELAY_URL = "";
+
+    const tg = window.Telegram && window.Telegram.WebApp;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      tg.setHeaderColor("#2A46E8");
+      tg.setBackgroundColor("#F6F7FB");
+      tg.MainButton.setText("Scan now");
+      tg.MainButton.show();
+      tg.MainButton.onClick(triggerScan);
+    }
+
+    function triggerScan() {
+      if (!RELAY_URL) { load(true); return; }
+      var statusEl = document.getElementById("statusText");
+      var original = statusEl.textContent;
+      statusEl.textContent = "Scan triggered — results update shortly";
+      fetch(RELAY_URL, { method: "POST" })
+        .then(function () { if (tg) tg.HapticFeedback.notificationOccurred("success"); })
+        .catch(function () { if (tg) tg.HapticFeedback.notificationOccurred("error"); })
+        .then(function () {
+          setTimeout(function () { statusEl.textContent = original; }, 5000);
+          load(false);
+        });
+    }
+
+    function minsAgo(n) { return new Date(Date.now() - n * 60000).toISOString(); }
+    function ago(iso) {
+      var m = Math.max(1, Math.round((Date.now() - new Date(iso)) / 60000));
+      return m < 60 ? m + "m ago" : Math.round(m / 60) + "h ago";
+    }
+
+    var DEMO = [
+      { pair: "EUR/USD", direction: "buy", strategy: "regression", price: 1.0824, time: minsAgo(4) },
+      { pair: "GBP/JPY", direction: "sell", strategy: "candlestick", pattern: "Bearish engulfing", price: 199.42, time: minsAgo(19) },
+      { pair: "USD/CAD", direction: "buy", strategy: "candlestick", pattern: "Hammer", price: 1.3548, time: minsAgo(31) },
+      { pair: "AUD/USD", direction: "sell", strategy: "regression", price: 0.6621, time: minsAgo(47) },
+      { pair: "USD/JPY", direction: "buy", strategy: "regression", price: 148.91, time: minsAgo(58) },
+      { pair: "NZD/USD", direction: "sell", strategy: "candlestick", pattern: "Shooting star", price: 0.6098, time: minsAgo(72) }
+    ];
+
+    var alerts = [];
+    var filter = "all";
+
+    function load(manual) {
+      if (DATA_URL) {
+        fetch(DATA_URL, { cache: "no-store" })
+          .then(function (res) { return res.json(); })
+          .then(function (data) {
+            alerts = data;
+            document.getElementById("demoBanner").classList.remove("show");
+            render();
+            if (manual && tg) tg.HapticFeedback.notificationOccurred("success");
+          })
+          .catch(function () {
+            alerts = DEMO;
+            document.getElementById("demoBanner").classList.add("show");
+            render();
+          });
+      } else {
+        alerts = DEMO;
+        document.getElementById("demoBanner").classList.add("show");
+        render();
+      }
+    }
+
+    function render() {
+      var list = document.getElementById("list");
+      var rows = alerts.filter(function (a) { return filter === "all" || a.strategy === filter; });
+      if (!rows.length) {
+        list.innerHTML = '<div class="empty"><h3>No alerts here yet</h3>' +
+          '<p>Nothing matches this filter right now. Switch filters or check back after the next scan.</p></div>';
+        return;
+      }
+      list.innerHTML = rows.map(function (a) {
+        var strategyLabel = a.strategy === "regression" ? "Regression channel" : (a.pattern || "Candlestick pattern");
+        return '<div class="card">' +
+          '<div class="card-top"><span class="pair">' + a.pair + '</span>' +
+          '<span class="pill ' + a.direction + '">' + (a.direction === "buy" ? "BUY" : "SELL") + '</span></div>' +
+          '<div class="card-meta"><span>' + strategyLabel + '</span><span class="num price">' + a.price + '</span></div>' +
+          '<div class="time">' + ago(a.time) + '</div>' +
+        '</div>';
+      }).join("");
+    }
+
+    document.querySelectorAll(".chip").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        document.querySelectorAll(".chip").forEach(function (c) { c.classList.remove("active"); });
+        btn.classList.add("active");
+        filter = btn.dataset.filter;
+        render();
+      });
+    });
+
+    load(false);
+    setInterval(function () { load(false); }, REFRESH_INTERVAL_MS);
+  </script>
+</body>
+</html>
